@@ -1,0 +1,221 @@
+---
+title: "Tarea1Micro4"
+author: "Joaquín Martínez"
+date: "2024-08-25"
+output: pdf_document
+---
+
+Ajustes, funciones, directorios
+```{r}
+# Directorio
+setwd("/Users/joaquin/Desktop/Tarea1ENMIC455")
+
+# Instalar paquetes
+packages <- c("haven", "ggplot2", "plyr", "tidyr", "dplyr", "readxl")
+
+install_if_missing <- function(packages) {
+  installed_packages <- installed.packages()[, "Package"]
+  for (pkg in packages) {
+    if (!(pkg %in% installed_packages)) {
+      install.packages(pkg)
+    }
+  }
+}
+
+install_if_missing(packages)
+
+invisible(lapply(packages, function(pkg) {
+  suppressMessages(library(pkg, character.only = TRUE))
+}))
+
+rm(packages, install_if_missing)
+
+
+#####
+
+est_desc <- function(data, region_col = "Region", var_col = "v2x_polyarchy") {
+  
+  # Calcular las estadísticas por región
+  resultados_por_region <- data %>%
+    group_by(.data[[region_col]]) %>%
+    summarise(
+      promedio = round(mean(.data[[var_col]], na.rm = TRUE), 2),
+      desviacion_estandar = round(sd(.data[[var_col]], na.rm = TRUE), 2),
+      minimo = round(min(.data[[var_col]], na.rm = TRUE), 2),
+      maximo = round(max(.data[[var_col]], na.rm = TRUE), 2),
+      observaciones = sum(!is.na(.data[[var_col]]))
+    )
+  
+  # Calcular las estadísticas para toda la muestra
+  resultados_globales <- data %>%
+    summarise(
+      !!region_col := "Global",
+      promedio = round(mean(.data[[var_col]], na.rm = TRUE), 2),
+      desviacion_estandar = round(sd(.data[[var_col]], na.rm = TRUE), 2),
+      minimo = round(min(.data[[var_col]], na.rm = TRUE), 2),
+      maximo = round(max(.data[[var_col]], na.rm = TRUE), 2),
+      observaciones = sum(!is.na(.data[[var_col]]))
+    )
+  
+  # Combinar los resultados
+  resultados <- bind_rows(resultados_por_region, resultados_globales)
+  
+  return(resultados)
+}
+
+
+```
+
+
+
+```{r}
+transponer_base <- function(base, columna_a_transformar, sufijo = "") {
+  base <- base %>%
+    arrange(ID, YEAR, Category)
+  
+  # Obtener categorías únicas
+  categorias <- unique(base$Category)
+  
+  # Transponer la columna seleccionada basada en el nombre de la categoría
+  for (cat in categorias) {
+    base[[paste0(columna_a_transformar, "_", cat, sufijo)]] <- ifelse(base$Category == cat, base[[columna_a_transformar]], NA)
+  }
+  
+  # Rellenar los NA con valores hacia arriba y hacia abajo
+  base <- base %>%
+    group_by(ID, YEAR) %>%
+    fill(starts_with(paste0(columna_a_transformar, "_")), .direction = "downup") %>%
+    ungroup()
+  
+  # Eliminar la columna original y las filas duplicadas
+  base <- base %>%
+    select(-all_of(columna_a_transformar)) %>%
+    distinct(ID, YEAR, .keep_all = TRUE) %>%
+    select(-Category)
+  
+  # Eliminar columnas que sean completamente NA
+  base <- base %>%
+    select(where(~ !all(is.na(.))))
+  
+  return(base)
+}
+
+# Transposición de la base para una columna específica con un sufijo personalizado
+aut_transponer <- function(data_frame, columna_a_transformar, funcion_transponer, sufijo = "") {
+  data_frame <- funcion_transponer(data_frame, columna_a_transformar, sufijo)
+  return(data_frame)
+}
+
+```
+
+
+
+2.a Juntar las bases
+```{r}
+# se quitaron las dos celdas del excel
+# Leer la base y filtrar, desde el inicio importamos solo la frecuencia por 100 mil habitantes. 
+UNODC_rate <- 
+  read_excel("Bases/data_cts_corruption_and_economic_crime.xlsx") %>%
+  filter(Year >= 2013 & Year <= 2022 
+         & `Unit of measurement` == "Rate per 100,000 population") %>%
+  rename(ID = Iso3_code, YEAR = Year) %>%
+  select(-Indicator, -Sex, -Age, -Source, -Subregion, -Dimension, -`Unit of measurement`)
+
+
+UNODC_counts <- 
+  read_excel("Bases/data_cts_corruption_and_economic_crime.xlsx") %>%
+  filter(Year >= 2013 & Year <= 2022 
+         & `Unit of measurement` == "Counts") %>%
+  rename(ID = Iso3_code, YEAR = Year) %>%
+  select(-Indicator, -Sex, -Age, -Source, -Subregion, -Dimension, -`Unit of measurement`)
+
+
+UNODC_counts <- transponer_base(UNODC_counts, "VALUE","_count")
+UNODC_rate <- transponer_base(UNODC_rate, "VALUE","_rate")
+
+
+
+UNODC <- UNODC_rate %>%
+  left_join(UNODC_counts, by = c("ID","Country","Region", "YEAR"))
+rm(UNODC_counts, UNODC_rate)
+
+VDEM <- read_dta("Bases/VDEM/V-Dem-CY-Core-v14.dta") %>%
+ filter(year >= 2013 & year <= 2022) %>%
+         rename(ID = country_text_id,
+                YEAR = year)
+
+# se juntan mediante codigos aunque uno sea ISO y el otro puede que no.
+BASE <- UNODC %>%
+  left_join(VDEM, by = c("ID", "YEAR"))
+```
+
+
+```{r}
+resultados <- est_desc(BASE)
+
+resultados_long <- resultados %>%
+  pivot_longer(cols = -Region, names_to = "Estadística", values_to = "Valor") %>%
+  pivot_wider(names_from = Region, values_from = Valor)
+```
+
+
+```{r}
+resultados <- SUP %>%
+  group_by(Region) %>%
+  summarise(
+    promedio = mean(v2x_polyarchy, na.rm = TRUE),
+    desviacion_estandar = sd(v2x_polyarchy, na.rm = TRUE),
+    minimo = min(v2x_polyarchy, na.rm = TRUE),
+    maximo = max(v2x_polyarchy, na.rm = TRUE),
+    observaciones = n()
+  )
+resultados_long <- resultados %>%
+  pivot_longer(cols = -Region, names_to = "Estadística", values_to = "Valor") %>%
+  pivot_wider(names_from = Region, values_from = Valor)
+
+# Mostrar los resultados reorganizados
+resultados_long
+```
+
+```{r}
+resultados_por_region <- SUP %>%
+  group_by(Region) %>%
+  summarise(
+    promedio = mean(v2x_polyarchy, na.rm = TRUE),
+    desviacion_estandar = sd(v2x_polyarchy, na.rm = TRUE),
+    minimo = min(v2x_polyarchy, na.rm = TRUE),
+    maximo = max(v2x_polyarchy, na.rm = TRUE),
+    observaciones = n()
+  )
+
+# Calcular las estadísticas para toda la muestra
+resultados_globales <- SUP %>%
+  summarise(
+    Region = "Global",
+    promedio = mean(v2x_polyarchy, na.rm = TRUE),
+    desviacion_estandar = sd(v2x_polyarchy, na.rm = TRUE),
+    minimo = min(v2x_polyarchy, na.rm = TRUE),
+    maximo = max(v2x_polyarchy, na.rm = TRUE),
+    observaciones = n()
+  )
+
+# Combinar los resultados
+resultados <- bind_rows(resultados_por_region, resultados_globales)
+
+resultados_long <- resultados %>%
+  pivot_longer(cols = -Region, names_to = "Estadística", values_to = "Valor") %>%
+  pivot_wider(names_from = Region, values_from = Valor)
+
+resultados_long
+```
+```{r}
+# Usar la función con la base SUP
+resultados <- est_desc(SUP)
+
+resultados_long <- resultados %>%
+  pivot_longer(cols = -Region, names_to = "Estadística", values_to = "Valor") %>%
+  pivot_wider(names_from = Region, values_from = Valor)
+```
+
+
+ v2x_polyarchy_codehigh,v2x_polyarchy_codelow, v2x_polyarchy_sd
