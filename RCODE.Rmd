@@ -5,13 +5,16 @@ date: "2024-08-25"
 output: pdf_document
 ---
 
-Ajustes, funciones, directorios
+Ajustar el directorio!!
 ```{r}
 # Directorio
 setwd("/Users/joaquin/Desktop/Tarea1ENMIC455")
+```
 
+Funciones y paquetes
+```{r}
 # Instalar paquetes
-packages <- c("haven", "ggplot2", "plyr", "tidyr", "dplyr", "readxl")
+packages <- c("haven", "ggplot2", "plyr", "tidyr", "dplyr", "readxl", "stargazer", "xtable")
 
 install_if_missing <- function(packages) {
   installed_packages <- installed.packages()[, "Package"]
@@ -63,12 +66,20 @@ est_desc <- function(data, region_col = "Region", var_col = "v2x_polyarchy") {
   return(resultados)
 }
 
+est_desc_v <- function(data, region_col = "Region", var_col = "VALUE_Corruption_rate") {
+  
+  # Calcular las estadísticas descriptivas usando la función est_desc
+  resultados <- est_desc(data, region_col = region_col, var_col = var_col)
+  
+  # Transformar la tabla a formato largo y luego ancho
+  tabla_corrupcion <- resultados %>%
+    pivot_longer(cols = -!!sym(region_col), names_to = "Estadística", values_to = "Valor") %>%
+    pivot_wider(names_from = !!sym(region_col), values_from = Valor)
+  
+  return(tabla_corrupcion)
+}
 
-```
 
-
-
-```{r}
 transponer_base <- function(base, columna_a_transformar, sufijo = "") {
   base <- base %>%
     arrange(ID, YEAR, Category)
@@ -108,8 +119,6 @@ aut_transponer <- function(data_frame, columna_a_transformar, funcion_transponer
 
 ```
 
-
-
 2.a Juntar las bases
 ```{r}
 # se quitaron las dos celdas del excel
@@ -120,6 +129,7 @@ UNODC_rate <-
          & `Unit of measurement` == "Rate per 100,000 population") %>%
   rename(ID = Iso3_code, YEAR = Year) %>%
   select(-Indicator, -Sex, -Age, -Source, -Subregion, -Dimension, -`Unit of measurement`)
+
 
 
 UNODC_counts <- 
@@ -134,7 +144,6 @@ UNODC_counts <- transponer_base(UNODC_counts, "VALUE","_count")
 UNODC_rate <- transponer_base(UNODC_rate, "VALUE","_rate")
 
 
-
 UNODC <- UNODC_rate %>%
   left_join(UNODC_counts, by = c("ID","Country","Region", "YEAR"))
 rm(UNODC_counts, UNODC_rate)
@@ -147,15 +156,82 @@ VDEM <- read_dta("Bases/VDEM/V-Dem-CY-Core-v14.dta") %>%
 # se juntan mediante codigos aunque uno sea ISO y el otro puede que no.
 BASE <- UNODC %>%
   left_join(VDEM, by = c("ID", "YEAR"))
+
+
+BASE <- UNODC %>%
+  inner_join(VDEM, by = c("ID", "YEAR"))
+
+rm(UNODC, VDEM)
+```
+
+2.a Estadística descriptiva
+```{r}
+indice_electoral <- est_desc(BASE, region_col = "Region", var_col = "v2x_polyarchy")
+indice_electoral_v <- est_desc_v(BASE, region_col = "Region", var_col = "v2x_polyarchy")
+indice_electoral_v$Indice <- "Democracia electoral"
+indice_electoral_v <- indice_electoral_v %>%
+  select(Indice, everything())
+
+corrupcion <- est_desc(BASE, region_col = "Region", var_col = "VALUE_Corruption_rate")
+corrupcion_v <- est_desc_v(BASE, region_col = "Region", var_col = "VALUE_Corruption_rate")
+corrupcion_v$Indice <- "Corrupción"
+corrupcion_v <- corrupcion_v %>%
+  select(Indice, everything())
+
+fraude <- est_desc(BASE, region_col = "Region", var_col = "VALUE_Fraud_rate")
+fraude_v <- est_desc_v(BASE, region_col = "Region", var_col = "VALUE_Fraud_rate")
+fraude_v$Indice <- "Fraude"
+fraude_v <- fraude_v %>%
+  select(Indice, everything())
+
+lavado <- est_desc(BASE, region_col = "Region", var_col = "VALUE_Money laundering_rate")
+lavado_v <- est_desc_v(BASE, region_col = "Region", var_col = "VALUE_Money laundering_rate")
+lavado_v$Indice <- "Lavado de dinero"
+lavado_v <- lavado_v %>%
+  select(Indice, everything())
+
+
+EstDesc <- bind_rows(indice_electoral_v, corrupcion_v, fraude_v, lavado_v)
+
+rm(indice_electoral_v, corrupcion_v, fraude_v, lavado_v)
+rm(indice_electoral, corrupcion, fraude, lavado)
+
+```
+
+2.a Exportar a LaTeX
+```{r}
+library(kableExtra)
+library(knitr)
+
+# Supongamos que tienes un dataframe llamado df
+tabla_latex<-EstDesc %>%
+  kbl(format = "latex") 
+
+# Mostrar el código LaTeX en la consola
+print(tabla_latex)
+
+
+tabla_latex <- xtable(EstDesc, caption = "Mi Tabla")
+
+# Mostrar el código LaTeX en la consola
+print(tabla_latex, type = "latex", include.rownames = FALSE)
+
+
 ```
 
 
-```{r}
-resultados <- est_desc(BASE)
 
-resultados_long <- resultados %>%
-  pivot_longer(cols = -Region, names_to = "Estadística", values_to = "Valor") %>%
-  pivot_wider(names_from = Region, values_from = Valor)
+```{r}
+panel_data <- BASE[order(BASE$ID, BASE$YEAR), ]
+
+# Filtra las observaciones para mantener solo aquellas con todos los años de 2013 a 2022
+years_required <- 2013:2022
+
+# Agrupa por ID y cuenta el número de años únicos presentes para cada ID
+complete_panels <- panel_data %>%
+  group_by(ID) %>%
+  filter(all(years_required %in% YEAR)) %>%
+  ungroup()
 ```
 
 
