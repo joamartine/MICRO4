@@ -5,16 +5,17 @@ date: "2024-08-25"
 output: pdf_document
 ---
 
+
 Ajustar el directorio!!
 ```{r}
 # Directorio
 setwd("/Users/joaquin/Desktop/Tarea1ENMIC455")
 ```
 
-Funciones y paquetes
+Funciones paquetes y objetos
 ```{r}
 # Instalar paquetes
-packages <- c("haven", "ggplot2", "plyr", "tidyr", "dplyr", "readxl", "stargazer", "xtable")
+packages <- c("haven", "ggplot2", "plyr", "tidyr", "dplyr", "readxl", "stargazer", "xtable", "modelsummary", "tibble", "broom.helpers", "plm")
 
 install_if_missing <- function(packages) {
   installed_packages <- installed.packages()[, "Package"]
@@ -35,6 +36,28 @@ rm(packages, install_if_missing)
 
 
 #####
+
+est_desc_global <- function(data, var_col = "v2x_polyarchy", indice_nombre = "Índice") {
+  
+  # Calcular las estadísticas para toda la muestra
+  resultados_globales <- data %>%
+    summarise(
+      promedio = round(mean(.data[[var_col]], na.rm = TRUE), 2),
+      desviacion_estandar = round(sd(.data[[var_col]], na.rm = TRUE), 2),
+      minimo = round(min(.data[[var_col]], na.rm = TRUE), 2),
+      maximo = round(max(.data[[var_col]], na.rm = TRUE), 2),
+      observaciones = sum(!is.na(.data[[var_col]]))
+    )
+  
+  # Añadir la columna del nombre del índice
+  resultados_globales$Indice <- indice_nombre
+  
+  # Reordenar las columnas para que 'Indice' esté primero
+  resultados_globales <- resultados_globales %>%
+    select(Indice, everything())
+  
+  return(resultados_globales)
+}
 
 est_desc <- function(data, region_col = "Region", var_col = "v2x_polyarchy") {
   
@@ -117,9 +140,40 @@ aut_transponer <- function(data_frame, columna_a_transformar, funcion_transponer
   return(data_frame)
 }
 
+
+# variables para regresiones
+cm2 <- c('v2x_corr'    = "Corrupción política",
+         'v2x_execorr'   = 'Corrupción ejecutiva',
+         'v2x_pubcorr'    = 'Corrupción sector público',
+         'v2x_polyarchy'   = 'Índice Democracia',
+         "TAX" = "Impuestos %PIB",
+         "CONTROL" = "Control Corrupción",
+         "REGUL_Q" = "Calidad Regulación",
+          '(Intercept)' = 'Constante'
+)
+
+gm2 <- list(
+    list("raw" = "nobs", "clean" = "Observaciones", "fmt" = 0),
+    list("raw" = "r.squared", "clean" = "R$^2$", "fmt" = 2),
+    list("raw" = "adj.r.squared", "clean" = "R$^2$ ajustado", "fmt" = 2)
+)
+
+aplanar <- function(data, year_prefix = "20", names_to = "Año", values_to = "Valor") {
+  # Reorganizar la base de datos de formato ancho a formato largo
+  data_largo <- data %>%
+    pivot_longer(
+      cols = starts_with(year_prefix),  # Seleccionar las columnas que empiezan con el prefijo dado (ej. "20")
+      names_to = names_to,              # Nombre de la nueva columna para los años
+      values_to = values_to             # Nombre de la nueva columna para los valores
+    )
+  
+  return(data_largo)
+}
+
 ```
 
-2.a Juntar las bases
+# SECCIÓN 2
+Juntar las bases
 ```{r}
 # se quitaron las dos celdas del excel
 # Leer la base y filtrar, desde el inicio importamos solo la frecuencia por 100 mil habitantes. 
@@ -164,8 +218,24 @@ BASE <- UNODC %>%
 rm(UNODC, VDEM)
 ```
 
-2.a Estadística descriptiva
+Estadística descriptiva
 ```{r}
+# estadística descriptiva global
+est1 <- est_desc_global(BASE, var_col = "v2x_polyarchy", indice_nombre = "Democracia Electoral")
+est2 <- est_desc_global(BASE, var_col = "VALUE_Corruption_rate", indice_nombre = "Corrupción")
+est3 <- est_desc_global(BASE, var_col = "VALUE_Fraud_rate", indice_nombre = "Fraude")
+est4 <- est_desc_global(BASE, var_col = "VALUE_Money laundering_rate", indice_nombre = "Lavado de dinero")
+est_global <- bind_rows(est1, est2, est3, est4)
+rm(est1, est2, est3, est4)
+
+tabla_latex <- xtable(est_global, caption = "Estadística Descriptiva Global")
+
+print(tabla_latex, type = "latex", include.rownames = FALSE)
+
+rm(tabla_latex)
+
+
+# Estadísticas por regiones
 indice_electoral <- est_desc(BASE, region_col = "Region", var_col = "v2x_polyarchy")
 indice_electoral_v <- est_desc_v(BASE, region_col = "Region", var_col = "v2x_polyarchy")
 indice_electoral_v$Indice <- "Democracia electoral"
@@ -191,107 +261,329 @@ lavado_v <- lavado_v %>%
   select(Indice, everything())
 
 
-EstDesc <- bind_rows(indice_electoral_v, corrupcion_v, fraude_v, lavado_v)
+est_regiones <- bind_rows(indice_electoral_v, corrupcion_v, fraude_v, lavado_v)
 
 rm(indice_electoral_v, corrupcion_v, fraude_v, lavado_v)
 rm(indice_electoral, corrupcion, fraude, lavado)
 
 ```
 
-2.a Exportar a LaTeX
+Variables Banco Mundial
 ```{r}
-library(kableExtra)
-library(knitr)
+# Los excel están ordenados aparte del código de R
+TAX <- read_excel("Bases/TAXPIB.xls")
+TAX <- aplanar(TAX, year_prefix = "20", names_to = "YEAR", values_to = "TAX")
+CONTROL <- read_excel("Bases/CONTROL.xls")
+CONTROL <- aplanar(CONTROL, year_prefix = "20", names_to = "YEAR", values_to = "CONTROL")
+QUALITY <- read_excel("Bases/RQUALITY.xlsx")
+QUALITY <- aplanar(QUALITY, year_prefix = "20", names_to = "YEAR", values_to = "REGUL_Q")
 
-# Supongamos que tienes un dataframe llamado df
-tabla_latex<-EstDesc %>%
-  kbl(format = "latex") 
+WORLDBANK <- left_join(TAX, CONTROL, by = c("Country", "ID", "YEAR"))
+WORLDBANK <- left_join(WORLDBANK, QUALITY, by = c("Country", "ID", "YEAR"))
 
-# Mostrar el código LaTeX en la consola
-print(tabla_latex)
+WORLDBANK$YEAR <- as.numeric(WORLDBANK$YEAR)
+BASE <- left_join(BASE, WORLDBANK, by = c("ID","Country", "YEAR"))
 
-
-tabla_latex <- xtable(EstDesc, caption = "Mi Tabla")
-
-# Mostrar el código LaTeX en la consola
-print(tabla_latex, type = "latex", include.rownames = FALSE)
-
-
+rm(TAX, CONTROL, QUALITY, WORLDBANK)
 ```
 
-
-
+Trayectoria países seleccionados
 ```{r}
-panel_data <- BASE[order(BASE$ID, BASE$YEAR), ]
+# Suponiendo que quieres graficar varios países y traducir sus nombres al español
+paises_seleccionados <- c("El Salvador", "Chile", "United States of America", "Honduras", "Peru")  # Lista de países a graficar
 
-# Filtra las observaciones para mantener solo aquellas con todos los años de 2013 a 2022
-years_required <- 2013:2022
+# Crear un vector de traducción
+traduccion_paises <- c("El Salvador" = "El Salvador",
+                       "Chile" = "Chile",
+                       "United States of America" = "Estados Unidos",
+                       "Honduras" = "Honduras",
+                       "Peru" = "Perú")
 
-# Agrupa por ID y cuenta el número de años únicos presentes para cada ID
-complete_panels <- panel_data %>%
-  group_by(ID) %>%
-  filter(all(years_required %in% YEAR)) %>%
-  ungroup()
-```
+# Filtrar y renombrar los países en el data frame
+datos_filtrados <- BASE[BASE$Country %in% paises_seleccionados, ]
+datos_filtrados$Country <- traduccion_paises[datos_filtrados$Country]
 
-
-```{r}
-resultados <- SUP %>%
-  group_by(Region) %>%
-  summarise(
-    promedio = mean(v2x_polyarchy, na.rm = TRUE),
-    desviacion_estandar = sd(v2x_polyarchy, na.rm = TRUE),
-    minimo = min(v2x_polyarchy, na.rm = TRUE),
-    maximo = max(v2x_polyarchy, na.rm = TRUE),
-    observaciones = n()
-  )
-resultados_long <- resultados %>%
-  pivot_longer(cols = -Region, names_to = "Estadística", values_to = "Valor") %>%
-  pivot_wider(names_from = Region, values_from = Valor)
-
-# Mostrar los resultados reorganizados
-resultados_long
-```
-
-```{r}
-resultados_por_region <- SUP %>%
-  group_by(Region) %>%
-  summarise(
-    promedio = mean(v2x_polyarchy, na.rm = TRUE),
-    desviacion_estandar = sd(v2x_polyarchy, na.rm = TRUE),
-    minimo = min(v2x_polyarchy, na.rm = TRUE),
-    maximo = max(v2x_polyarchy, na.rm = TRUE),
-    observaciones = n()
+# Creación de la gráfica
+Evol_democracia <- ggplot(datos_filtrados, aes(x = YEAR, y = v2x_polyarchy, color = Country, group = Country)) + 
+  geom_line() + 
+  geom_point() +
+  labs(x = "Año",
+       y = "Índice Democracia electoral",
+       color = "País") +  # Cambia la leyenda a "País"
+  scale_x_continuous(breaks = seq(min(datos_filtrados$YEAR), max(datos_filtrados$YEAR), by = 1)) +  # Asegura que el eje X muestre solo números enteros
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Times New Roman", size = 16),  # Cambiar tipografía y tamaño
+    plot.title = element_blank(),  # Quitar el título
+    axis.title = element_text(size = 18),  # Aumentar tamaño de títulos de ejes
+    axis.text = element_text(size = 12)  # Aumentar tamaño del texto de los ejes
   )
 
-# Calcular las estadísticas para toda la muestra
-resultados_globales <- SUP %>%
-  summarise(
-    Region = "Global",
-    promedio = mean(v2x_polyarchy, na.rm = TRUE),
-    desviacion_estandar = sd(v2x_polyarchy, na.rm = TRUE),
-    minimo = min(v2x_polyarchy, na.rm = TRUE),
-    maximo = max(v2x_polyarchy, na.rm = TRUE),
-    observaciones = n()
+Evol_democracia
+
+ggsave("EvoluciónDemocraciaElectoral.png", plot = Evol_democracia, width = 10, height = 6, dpi = 300)
+
+rm(Evol_democracia, datos_filtrados)
+```
+
+Relación entre democracia y corrupción
+```{r}
+# Gráfico 1: v2x_polyarchy vs. v2x_corr (color: rojo)
+p1 <- ggplot(BASE, aes(x = v2x_polyarchy, y = v2x_corr)) +
+  geom_point(color = "#C12525") +  # Puntos en color rojo
+  labs(
+    x = "Índice Democracia Electoral",
+    y = "Índice de corrupción política"
+  ) +
+  scale_x_continuous(breaks = seq(0.2, 1.0, by = 0.2)) +  # Ajusta los índices del eje X
+  scale_y_continuous(breaks = seq(0.2, 1.0, by = 0.2)) +  # Ajusta los índices del eje Y
+  coord_fixed() +  # Hace que el grid sea cuadrado
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Times New Roman", size = 16),
+    plot.title = element_text(size = 14, hjust = 0.5),  # Añade el título y lo centra
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    panel.background = element_rect(fill = "#E5E5E5", color = "#E5E5E5")  # Fondo gris claro
   )
 
-# Combinar los resultados
-resultados <- bind_rows(resultados_por_region, resultados_globales)
+ggsave("grafico_corrupcion_politica.png", plot = p1, width = 5, height = 5, units = "in")
 
-resultados_long <- resultados %>%
-  pivot_longer(cols = -Region, names_to = "Estadística", values_to = "Valor") %>%
-  pivot_wider(names_from = Region, values_from = Valor)
 
-resultados_long
+# Gráfico 2: v2x_polyarchy vs. v2x_execorr (color: negro)
+p2 <- ggplot(BASE, aes(x = v2x_polyarchy, y = v2x_execorr)) +
+  geom_point(color = "#2A3365") +  # Puntos en color negro
+  labs(
+    x = "Índice Democracia Electoral",
+    y = "Índice corrupción ejecutiva"
+  ) +
+  scale_x_continuous(breaks = seq(0.2, 1.0, by = 0.2)) +  # Ajusta los índices del eje X
+  scale_y_continuous(breaks = seq(0.2, 1.0, by = 0.2)) +  # Ajusta los índices del eje Y
+  coord_fixed() +  # Hace que el grid sea cuadrado
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Times New Roman", size = 16),
+    plot.title = element_text(size = 14, hjust = 0.5),  # Añade el título y lo centra
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    panel.background = element_rect(fill = "#E5E5E5", color = "#E5E5E5")  # Fondo gris claro
+  )
+
+ggsave("grafico_corrupcion_ejecutiva.png", plot = p2, width = 5, height = 5, units = "in")
+
+
+# Gráfico 3: v2x_polyarchy vs. v2x_pubcorr (color: amarillo)
+p3 <- ggplot(BASE, aes(x = v2x_polyarchy, y = v2x_pubcorr)) +
+  geom_point(color = "#572A65") +  # Puntos en color amarillo
+  labs(
+    x = "Índice Democracia Electoral",
+    y = "Índice corrupción del sector público"
+  ) +
+  scale_x_continuous(breaks = seq(0.2, 1.0, by = 0.2)) +  # Ajusta los índices del eje X
+  scale_y_continuous(breaks = seq(0.2, 1.0, by = 0.2)) +  # Ajusta los índices del eje Y
+  coord_fixed() +  # Hace que el grid sea cuadrado
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Times New Roman", size = 16),
+    plot.title = element_text(size = 14, hjust = 0.5),  # Añade el título y lo centra
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    panel.background = element_rect(fill = "#E5E5E5", color = "#E5E5E5")  # Fondo gris claro
+  )
+
+ggsave("grafico_corrupcion_sector_publico.png", plot = p3, width = 5, height = 5, units = "in")
+
+rm(p1,p2,p3)
 ```
+
+# REGRESIONES SIN EFECTOS FIJOS
+## 3a
+```{r sin controles}
+r_politica_no_controles <- lm(v2x_corr ~ v2x_polyarchy, data = BASE)
+r_ejecutivo_no_controles <- lm(v2x_execorr ~ v2x_polyarchy, data = BASE)
+r_publico_no_controles <- lm(v2x_pubcorr ~ v2x_polyarchy, data = BASE)
+
+modelos <- list(r_politica_no_controles, r_ejecutivo_no_controles, r_publico_no_controles)
+
+rows <- tribble(
+    ~term,                   ~"(1)",          ~"(2)", ~"(3)"
+)
+
+attr(rows, 'position') <- c(7,8)
+
+output <- msummary(modelos,     
+         vcov = "HC1",
+         fmt = 3,
+         estimate = "{estimate}{stars}",  # Incluye los asteriscos de significancia
+         statistic = "[{std.error}]",
+         coef_map = cm2, 
+         gof_omit = 'AIC|BIC|RMSE|Within|FE',
+         gof_map = gm2,
+         align = "lccc",  # Ajuste del alineamiento de columnas
+         output = "latex",
+         escape = FALSE
+         ) %>%
+    add_header_above(c(" " = 1,
+                       "Política" = 1,
+                       "Ejecutiva" = 1,
+                       "Sector público" = 1),
+                     escape = FALSE
+    )
+
+    cat(output)
+```
+
+## 3c
+
+Corrupción política 
+```{r cor política}
+r_politica_si_controles_1 <- lm(v2x_corr ~ v2x_polyarchy, data = BASE)
+r_politica_si_controles_2 <- lm(v2x_corr ~ v2x_polyarchy + TAX , data = BASE)
+r_politica_si_controles_3 <- lm(v2x_corr ~ v2x_polyarchy + TAX + REGUL_Q, data = BASE)
+r_politica_si_controles_4 <- lm(v2x_corr ~ v2x_polyarchy + TAX + REGUL_Q + CONTROL, data = BASE)
+
+modelos <- list(r_politica_si_controles_1, r_politica_si_controles_2, r_politica_si_controles_3, r_politica_si_controles_4)
+
+rows <- tribble(
+    ~term,                   ~"(1)",          ~"(2)", ~"(3)", ~"(4)"
+)
+
+output <- msummary(modelos,     
+         vcov = "HC1",
+         fmt = 3,
+         estimate = "{estimate}{stars}",  # Incluye los asteriscos de significancia
+         statistic = "[{std.error}]",
+         coef_map = cm2, 
+         gof_omit = 'AIC|BIC|RMSE|Within|FE',
+         gof_map = gm2,
+         align = "lcccc",  # Ajuste del alineamiento de columnas
+         output = "latex",
+         escape = FALSE
+         ) %>%
+    add_header_above(c(" " = 1,
+                       "Corrupción política" = 4
+                       ),
+                     escape = FALSE
+    )
+
+    cat(output)
+
+```
+
+Corrupción ejecutiva
+```{r cor ejecutiva}
+r_ejecutivo_si_controles_1 <- lm(v2x_execorr ~ v2x_polyarchy, data = BASE)
+r_ejecutivo_si_controles_2 <- lm(v2x_execorr ~ v2x_polyarchy + TAX , data = BASE)
+r_ejecutivo_si_controles_3 <- lm(v2x_execorr ~ v2x_polyarchy + TAX + REGUL_Q, data = BASE)
+r_ejecutivo_si_controles_4 <- lm(v2x_execorr ~ v2x_polyarchy + TAX + REGUL_Q + CONTROL, data = BASE)
+
+modelos <- list(r_ejecutivo_si_controles_1, r_ejecutivo_si_controles_2, r_ejecutivo_si_controles_3, r_ejecutivo_si_controles_4)
+
+rows <- tribble(
+    ~term,                   ~"(1)",          ~"(2)", ~"(3)", ~"(4)"
+)
+
+output <- msummary(modelos,     
+         vcov = "HC1",
+         fmt = 3,
+         estimate = "{estimate}{stars}",  # Incluye los asteriscos de significancia
+         statistic = "[{std.error}]",
+         coef_map = cm2, 
+         gof_omit = 'AIC|BIC|RMSE|Within|FE',
+         gof_map = gm2,
+         align = "lcccc",  # Ajuste del alineamiento de columnas
+         output = "latex",
+         escape = FALSE
+         ) %>%
+    add_header_above(c(" " = 1,
+                       "Corrupción Ejecutivos" = 4
+                       ),
+                     escape = FALSE
+    )
+
+    cat(output)
+
+```
+
+Corrupción sector público
+```{r cor sector publico}
+r_publico_si_controles_1 <- lm(v2x_pubcorr ~ v2x_polyarchy, data = BASE)
+r_publico_si_controles_1 <- lm(v2x_pubcorr ~ v2x_polyarchy + TAX , data = BASE)
+r_publico_si_controles_1 <- lm(v2x_pubcorr ~ v2x_polyarchy + TAX + REGUL_Q, data = BASE)
+r_publico_si_controles_1 <- lm(v2x_pubcorr ~ v2x_polyarchy + TAX + REGUL_Q + CONTROL, data = BASE)
+
+modelos <- list(r_publico_si_controles_1, r_publico_si_controles_1, r_publico_si_controles_1, r_publico_si_controles_1)
+
+rows <- tribble(
+    ~term,                   ~"(1)",          ~"(2)", ~"(3)", ~"(4)"
+)
+
+output <- msummary(modelos,     
+         vcov = "HC1",
+         fmt = 3,
+         estimate = "{estimate}{stars}",  # Incluye los asteriscos de significancia
+         statistic = "[{std.error}]",
+         coef_map = cm2, 
+         gof_omit = 'AIC|BIC|RMSE|Within|FE',
+         gof_map = gm2,
+         align = "lcccc",  # Ajuste del alineamiento de columnas
+         output = "latex",
+         escape = FALSE
+         ) %>%
+    add_header_above(c(" " = 1,
+                       "Corrupción Sector Público" = 4
+                       ),
+                     escape = FALSE
+    )
+
+    cat(output)
+
+```
+
+# REGRESIÓN CON EFECTOS FIJOS
+
+TWFE sin controles
 ```{r}
-# Usar la función con la base SUP
-resultados <- est_desc(SUP)
+# Ajustar los modelos con efectos fijos de dos vías para ID y YEAR
+r_pol_fe_no_controles <- plm(v2x_corr ~ v2x_polyarchy, data = BASE,
+                             index = c("ID", "YEAR"),
+                             model = "within",
+                             effect = "twoways")
+r_ejec_fe_no_controles <- plm(v2x_execorr ~ v2x_polyarchy, data = BASE,
+                             index = c("ID", "YEAR"),
+                             model = "within",
+                             effect = "twoways")
+r_pub_fe_no_controles <- plm(v2x_pubcorr ~ v2x_polyarchy, data = BASE,
+                             index = c("ID", "YEAR"),
+                             model = "within",
+                             effect = "twoways")
 
-resultados_long <- resultados %>%
-  pivot_longer(cols = -Region, names_to = "Estadística", values_to = "Valor") %>%
-  pivot_wider(names_from = Region, values_from = Valor)
+modelos <- list(r_politica_no_controles, r_pol_fe_no_controles, r_ejecutivo_no_controles, r_ejec_fe_no_controles, r_publico_no_controles, r_pub_fe_no_controles)
+
+stargazer(modelos, type = "latex")
+
+```
+
+TWFE con controles
+```{r}
+r_pol_fe_si_controles <- plm(v2x_corr ~ v2x_polyarchy + TAX + REGUL_Q + CONTROL, 
+                             data = BASE, 
+                             index = c("ID", "YEAR"), 
+                             model = "within", effect = "twoways")
+r_ejec_fe_si_controles <- plm(v2x_execorr ~ v2x_polyarchy + TAX + REGUL_Q + CONTROL, 
+                             data = BASE, 
+                             index = c("ID", "YEAR"), 
+                             model = "within", effect = "twoways")
+r_pub_fe_si_controles <- plm(v2x_pubcorr ~ v2x_polyarchy + TAX + REGUL_Q + CONTROL, 
+                             data = BASE, 
+                             index = c("ID", "YEAR"), 
+                             model = "within", effect = "twoways")
+
+modelos <- list(r_pol_fe_no_controles, r_pol_fe_si_controles, r_ejec_fe_no_controles, r_ejec_fe_si_controles, r_pub_fe_no_controles, r_pub_fe_si_controles)
+
+stargazer(modelos, type = "text")
+
 ```
 
 
- v2x_polyarchy_codehigh,v2x_polyarchy_codelow, v2x_polyarchy_sd
+
